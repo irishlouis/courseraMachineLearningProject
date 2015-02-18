@@ -1,0 +1,121 @@
+---
+title: "Coursera Machine Learning Project"
+author: "louissmith"
+date: "Thursday, February 12, 2015"
+output: html_document
+---
+##Classification of exercise
+###Load packages
+```{r, packages}
+library(caret, quietly = TRUE)
+```
+
+###Load data
+Testing & training data files are loaded from <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv> and <https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv> respectively.
+```{r, load.data}
+setwd("C:/Users/Louis/SkyDrive/Documents/R-files/CourseraMachineLearning")
+if (!file.exists("training.csv")) {
+  dataset_url1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+  download.file(dataset_url1, "training.csv")  
+}
+if (!file.exists("testing.csv")) {
+  dataset_url2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+  download.file(dataset_url2, "testing.csv")  
+}
+training <- read.csv("training.csv", stringsAsFactors=F)
+testing <- read.csv("testing.csv", stringsAsFactors=F)
+training$classe <- as.factor(training$classe)
+```
+###Summary of training data
+Looking at the summary of the training data.
+```{r, summary, echo=FALSE, eval=FALSE}
+summary(training)
+```
+###Pre-Processing
+A number of the dimensions such as name and date stamps will be excluded. <br>
+the remaining dimensions are cast as numeric.
+```{r, preProc1, warning=FALSE, error=FALSE}
+training1 <- training[, !names(training) %in% c("user_name", "cvtd_timestamp", "new_window",
+                                                "raw_timestamp_part_1", "raw_timestamp_part_2")]
+for(i in 1:(ncol(training1)-1)){
+  training1[,i] <- as.numeric(training1[,i])
+}
+```
+A number of dimensions contain a large % of NA's. <br>
+Dimensions with more than 10,000 NA's are dropped.
+```{r, preProc2}
+drops <- NULL
+for (i in 1:(ncol(training1)-1)) {
+  if (sum(is.na(training1[ , i])) > 10000)
+  {
+    drops <- c(drops, names(training1)[i])
+  }
+}
+training2 <- training1[,!(names(training1) %in% drops)]
+```
+The cleaned data is condensed to reduce the number of attributes using PCA to capture 80% of the variance <br>
+filtered for complete rows only.
+```{r, preProc3}
+complete.training <- training2[complete.cases(training2), ]
+preProc <- preProcess(complete.training[,-ncol(complete.training)],method="pca", thresh = .8)
+trainingPCA <- predict(preProc,complete.training[,-ncol(complete.training)])
+trainingPCA <- cbind(trainingPCA, complete.training$classe)
+names(trainingPCA)[ncol(trainingPCA)] <- "classe"
+```
+Finally the testing dataset is put throught the same transformation.
+```{r, preProc4}
+testing2 <- testing[ , (names(testing) %in% names(training2))]
+testingPCA <- predict(preProc, testing2)
+```
+###Training Models
+####Partitioning data for training & testing
+The training data is partitioned into two datasets 60/40 split; to train and test prospective models.
+```{r, split.training }
+inTrain <- createDataPartition(y=trainingPCA$classe, p=0.6, list=FALSE)
+trainingOfTraining <- trainingPCA[inTrain,]
+testingOfTraining <- trainingPCA[-inTrain,]
+```
+The testingOfTraining dataset will be used for cross validation.
+
+####Decision Tree
+```{r, decision.tree}
+modelFitDT <- train(classe ~ .,method="rpart",  data=trainingOfTraining)
+predict.DT <- predict(modelFitDT, testingOfTraining[,-length(testingOfTraining)])
+matrix1<-confusionMatrix(testingOfTraining$classe, predict.DT)
+```
+The results of the cross validation indicate that the overall accuracy of the decision tree model is `r matrix1$overall[1]`.
+
+####Neural Net
+```{r, n.net, message=FALSE, cache=TRUE, results='hide'}
+modelFitNN <- train(classe ~ .,method="nnet",  data=trainingOfTraining)
+predict.nnet <- predict(modelFitNN, testingOfTraining[,-length(testingOfTraining)])
+matrix2<-confusionMatrix(testingOfTraining$classe, predict.nnet)
+```
+The results of the cross validation indicate that the overall accuracy of the neural net model is `r matrix2$overall[1]`.
+
+####Random Forest
+Due the memory (RAM) limitations, the training dataset is sampled to give a more managable number of rows.
+```{r, rf, cache=TRUE}
+set.seed(123)
+sample <- sample(nrow(trainingOfTraining), 5000)
+sample <- sample[order(sample)]
+modelFitRF <- train(trainingOfTraining$classe[sample] ~. , method = "rf", verbose=F, prox = T, 
+                   data = trainingOfTraining[sample, ])
+predict.rf <- predict(modelFitRF, testingOfTraining[,-length(testingOfTraining)])
+matrix3 <- confusionMatrix(testingOfTraining$classe, predict.rf)
+```
+The results of the cross validation indicate that the overall accuracy of the Random Forest model is `r matrix3$overall[1]`.
+
+To further check the accuracy of the rf model, we test the model accuracy on the unused training data.
+```{r, rf2, echo=FALSE}
+acc<-confusionMatrix( trainingOfTraining$classe[-sample], 
+                predict(modelFitRF, trainingOfTraining[-sample, -length(trainingOfTraining)] ))$overall[1]
+```
+The indication accuracy when tested on the unused training data is `r acc`.
+
+The results of the cross validation for the random forest of `r matrix3$overall[1]` and `r acc` indicate that this is the best fit model.
+
+###Testing on unseen data
+```{r, testing1}
+predict(modelFitRF, testingPCA)
+```
